@@ -16,6 +16,7 @@ import { registerPaneTools } from './tools/pane.js';
 import { registerTabTools } from './tools/tab.js';
 import { registerWidgetTools } from './tools/widgets.js';
 import { registerBacktestTools } from './tools/backtest.js';
+import { registerTradeAnalyticsTools } from './tools/trade-analytics.js';
 
 const server = new McpServer(
   {
@@ -88,6 +89,7 @@ registerPaneTools(server);
 registerTabTools(server);
 registerWidgetTools(server);
 registerBacktestTools(server);
+registerTradeAnalyticsTools(server);
 
 // Startup notice (stderr so it doesn't interfere with MCP stdio protocol)
 process.stderr.write('⚠  tradingview-mcp  |  Unofficial tool. Not affiliated with TradingView Inc. or Anthropic.\n');
