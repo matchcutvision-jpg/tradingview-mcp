@@ -20,6 +20,7 @@ import { registerTradeAnalyticsTools } from './tools/trade-analytics.js';
 import { registerAgentSystemTools } from './tools/agent-system.js';
 import { registerIndiaInstitutionToolsTools } from './tools/india-institutions.js';
 import { registerComplianceTools } from './tools/compliance.js';
+import { registerChartAnalysisTools } from './tools/chart-analysis.js';
 
 const server = new McpServer(
   {
@@ -96,6 +97,7 @@ registerTradeAnalyticsTools(server);
 registerAgentSystemTools(server);
 registerIndiaInstitutionToolsTools(server);
 registerComplianceTools(server);
+registerChartAnalysisTools(server);
 
 // Startup notice (stderr so it doesn't interfere with MCP stdio protocol)
 process.stderr.write('⚠  tradingview-mcp  |  Unofficial tool. Not affiliated with TradingView Inc. or Anthropic.\n');
