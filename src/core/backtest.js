@@ -1,4 +1,4 @@
-import { connection } from '../connection.js';
+// Backtest core - connection handled by tools layer
 
 // Run backtest: inject params, compile strategy, open tester, wait for results
 export async function runBacktest({ strategy_name, parameters, symbol, timeframe, from_date, to_date }) {

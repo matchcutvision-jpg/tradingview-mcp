@@ -1,4 +1,4 @@
-import { connection } from '../connection.js';
+// Widgets don't need connection - they return HTML directly
 
 // MCP resource URL builder
 function resourceUrl(id) {
