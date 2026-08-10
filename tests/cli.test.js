@@ -144,6 +144,7 @@ describe('CLI — pine check (server compile)', () => {
     const { stdout, exitCode } = run(['pine', 'check'], { input: source });
     assert.equal(exitCode, 0);
     const result = JSON.parse(stdout);
+    assert.equal(result.success, true);
     assert.equal(result.compiled, false);
     assert.ok(result.error_count > 0);
   });

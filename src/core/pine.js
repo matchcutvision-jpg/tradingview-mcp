@@ -164,6 +164,60 @@ export function analyze({ source }) {
     }
   }
 
+  const knownIdentifiers = new Set([
+    'close', 'open', 'high', 'low', 'volume', 'time', 'bar_index', 'na', 'color', 'strategy', 'indicator', 'plot',
+    'array', 'array.from', 'array.new', 'array.new_float', 'array.get', 'array.set', 'input', 'math', 'ta',
+    'if', 'else', 'for', 'while', 'return', 'var', 'bool', 'int', 'float', 'string', 'false', 'true', 'switch', 'case', 'break', 'continue',
+    'overlay', 'title', 'shorttitle', 'format', 'precision', 'scale', 'max_lines_count', 'alert', 'fill', 'hline', 'linebreak', 'crossover', 'crossunder',
+  ]);
+  const assignedNames = new Set();
+  const seenUndefinedVariables = new Set();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const assignmentMatch = line.match(/\b([A-Za-z_][A-Za-z0-9_]*)\s*(?==)/);
+    if (assignmentMatch) {
+      assignedNames.add(assignmentMatch[1]);
+    }
+
+    const callPattern = /([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/g;
+    let callMatch;
+    while ((callMatch = callPattern.exec(line)) !== null) {
+      const name = callMatch[1];
+      const args = callMatch[2];
+      if (assignedNames.has(name)) continue;
+      if (name.includes('.')) continue;
+      const prevChar = line[callMatch.index - 1];
+      if (prevChar === '.') continue;
+
+      if (!knownIdentifiers.has(name)) {
+        diagnostics.push({
+          line: i + 1, column: callMatch.index + 1,
+          message: `Unknown function or identifier '${name}' used in local analysis.`,
+          severity: 'error',
+        });
+        continue;
+      }
+
+      const strippedArgs = args.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '');
+      const tokenPattern = /\b([A-Za-z_][A-Za-z0-9_]*)\b/g;
+      let argMatch;
+      while ((argMatch = tokenPattern.exec(strippedArgs)) !== null) {
+        const argName = argMatch[1];
+        const prevChar = strippedArgs[argMatch.index - 1];
+        if (knownIdentifiers.has(argName) || assignedNames.has(argName) || argName === name || argName === 'plot' || prevChar === '.') continue;
+        if (argName.includes('.')) continue;
+        if (seenUndefinedVariables.has(`${i + 1}:${argName}`)) continue;
+        seenUndefinedVariables.add(`${i + 1}:${argName}`);
+        diagnostics.push({
+          line: i + 1, column: argMatch.index + 1,
+          message: `Unknown variable or identifier '${argName}' used in local analysis.`,
+          severity: 'error',
+        });
+      }
+    }
+  }
+
   if (!isV6 && source.includes('//@version=')) {
     const vMatch = source.match(/\/\/@version=(\d+)/);
     if (vMatch && parseInt(vMatch[1]) < 5) {
@@ -183,63 +237,105 @@ export function analyze({ source }) {
   };
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 2500) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function check({ source }) {
+  if (!source || typeof source !== 'string' || source.trim() === '') {
+    return {
+      success: true,
+      compiled: false,
+      error_count: 1,
+      warning_count: 0,
+      errors: [{ message: 'Source is empty.' }],
+      warnings: undefined,
+      note: 'Empty source fell back to local validation.',
+    };
+  }
+
   const formData = new URLSearchParams();
   formData.append('source', source);
 
-  const response = await fetch(
-    'https://pine-facade.tradingview.com/pine-facade/translate_light?user_name=Guest&pine_id=00000000-0000-0000-0000-000000000000',
-    {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Referer': 'https://www.tradingview.com/',
-      },
-      body: formData,
+  try {
+    const response = await fetchWithTimeout(
+      'https://pine-facade.tradingview.com/pine-facade/translate_light?user_name=Guest&pine_id=00000000-0000-0000-0000-000000000000',
+      {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Referer': 'https://www.tradingview.com/',
+        },
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`TradingView API returned ${response.status}: ${response.statusText}`);
     }
-  );
 
-  if (!response.ok) {
-    throw new Error(`TradingView API returned ${response.status}: ${response.statusText}`);
-  }
+    const result = await response.json();
+    const errors = [];
+    const warnings = [];
+    const inner = result?.result;
 
-  const result = await response.json();
-  const errors = [];
-  const warnings = [];
-  const inner = result?.result;
-
-  if (inner) {
-    if (inner.errors2 && inner.errors2.length > 0) {
-      for (const e of inner.errors2) {
-        errors.push({
-          line: e.start?.line, column: e.start?.column,
-          end_line: e.end?.line, end_column: e.end?.column,
-          message: e.message,
-        });
+    if (inner) {
+      if (inner.errors2 && inner.errors2.length > 0) {
+        for (const e of inner.errors2) {
+          errors.push({
+            line: e.start?.line, column: e.start?.column,
+            end_line: e.end?.line, end_column: e.end?.column,
+            message: e.message,
+          });
+        }
+      }
+      if (inner.warnings2 && inner.warnings2.length > 0) {
+        for (const w of inner.warnings2) {
+          warnings.push({ line: w.start?.line, column: w.start?.column, message: w.message });
+        }
       }
     }
-    if (inner.warnings2 && inner.warnings2.length > 0) {
-      for (const w of inner.warnings2) {
-        warnings.push({ line: w.start?.line, column: w.start?.column, message: w.message });
-      }
+
+    if (result.error && typeof result.error === 'string') {
+      errors.push({ message: result.error });
     }
-  }
 
-  if (result.error && typeof result.error === 'string') {
-    errors.push({ message: result.error });
-  }
+    const compiled = errors.length === 0;
+    return {
+      success: true,
+      compiled,
+      error_count: errors.length,
+      warning_count: warnings.length,
+      errors: errors.length > 0 ? errors : undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
+      note: compiled ? 'Pine Script compiled successfully.' : undefined,
+    };
+  } catch (error) {
+    const fallback = analyze({ source });
+    const errors = fallback.diagnostics
+      .filter((item) => item.severity === 'error')
+      .map(({ line, column, message }) => ({ line, column, message }));
+    const warnings = fallback.diagnostics
+      .filter((item) => item.severity === 'warning' || item.severity === 'info')
+      .map(({ line, column, message }) => ({ line, column, message }));
 
-  const compiled = errors.length === 0;
-  return {
-    success: true,
-    compiled,
-    error_count: errors.length,
-    warning_count: warnings.length,
-    errors: errors.length > 0 ? errors : undefined,
-    warnings: warnings.length > 0 ? warnings : undefined,
-    note: compiled ? 'Pine Script compiled successfully.' : undefined,
-  };
+    return {
+      success: true,
+      compiled: errors.length === 0,
+      error_count: errors.length,
+      warning_count: warnings.length,
+      errors: errors.length > 0 ? errors : undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
+      note: `Pine compile API unavailable; fell back to local static analysis (${error.message}).`,
+    };
+  }
 }
 
 // ── Functions requiring TradingView connection ──

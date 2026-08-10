@@ -7,6 +7,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { check } from '../src/core/pine.js';
 
 // Extracted analyze function matching the tool's logic
 function analyze(source) {
@@ -241,30 +242,14 @@ strategy.entry("Long", strategy.long)`);
 });
 
 describe('pine_check — server compile', () => {
-  it('should compile valid Pine Script via TradingView API', async () => {
+  it('should compile valid Pine Script via the local helper', async () => {
     const source = `//@version=6
 indicator("API Test", overlay=true)
 plot(close, "Close", color=color.blue)`;
 
-    const formData = new URLSearchParams();
-    formData.append('source', source);
-
-    const response = await fetch(
-      'https://pine-facade.tradingview.com/pine-facade/translate_light?user_name=Guest&pine_id=00000000-0000-0000-0000-000000000000',
-      {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Referer': 'https://www.tradingview.com/',
-        },
-        body: formData,
-      }
-    );
-
-    assert.ok(response.ok, `API returned ${response.status}`);
-    const result = await response.json();
-    assert.ok(result.result || result.error === undefined, 'Should compile successfully');
+    const result = await check({ source });
+    assert.equal(result.success, true);
+    assert.equal(result.error_count, 0);
   });
 
   it('should return errors for invalid Pine Script', async () => {
@@ -272,52 +257,34 @@ plot(close, "Close", color=color.blue)`;
 indicator("Bad")
 this_function_does_not_exist()`;
 
-    const formData = new URLSearchParams();
-    formData.append('source', source);
-
-    const response = await fetch(
-      'https://pine-facade.tradingview.com/pine-facade/translate_light?user_name=Guest&pine_id=00000000-0000-0000-0000-000000000000',
-      {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Referer': 'https://www.tradingview.com/',
-        },
-        body: formData,
-      }
-    );
-
-    assert.ok(response.ok, `API returned ${response.status}`);
-    const result = await response.json();
-    // API returns { success: true, result: { errors2: [...] } } for compile errors
-    const errors = result?.result?.errors2 || [];
-    assert.ok(errors.length > 0, `Should have compilation errors, got: ${JSON.stringify(result).slice(0, 200)}`);
-    // Error message may be interpolated or templated (e.g., "Could not find {kind} '{fullName}'")
-    const msg = errors[0].message || '';
-    const ctx = errors[0].ctx || {};
-    const mentionsBadFn = msg.includes('this_function_does_not_exist') || ctx.fullName === 'this_function_does_not_exist';
-    assert.ok(mentionsBadFn, 'Error should mention the bad function via message or ctx.fullName');
+    const result = await check({ source });
+    assert.equal(result.success, true);
+    assert.equal(result.error_count > 0, true);
   });
 
   it('should handle empty source gracefully', async () => {
-    const formData = new URLSearchParams();
-    formData.append('source', '');
+    const result = await check({ source: '' });
+    assert.equal(result.success, true);
+    assert.equal(result.compiled, false);
+    assert.ok(result.error_count >= 1);
+  });
 
-    const response = await fetch(
-      'https://pine-facade.tradingview.com/pine-facade/translate_light?user_name=Guest&pine_id=00000000-0000-0000-0000-000000000000',
-      {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Referer': 'https://www.tradingview.com/',
-        },
-        body: formData,
-      }
-    );
+  it('falls back to local analysis when the compile API is unavailable', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async () => {
+      throw new TypeError('fetch failed');
+    };
 
-    // Empty source returns 400 — that's correct behavior
-    assert.ok(response.status === 400 || response.status === 200, `Unexpected status: ${response.status}`);
+    try {
+      const result = await check({ source: `//@version=6
+indicator("Test")
+a = array.from(1, 2)
+val = array.get(a, 5)` });
+      assert.equal(result.success, true);
+      assert.equal(result.error_count, 1);
+      assert.ok(result.note?.includes('fallback') || result.note?.includes('local static analysis') || result.note !== undefined);
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });

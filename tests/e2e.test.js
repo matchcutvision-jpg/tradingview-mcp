@@ -28,6 +28,18 @@ let Runtime;
 let Input;
 let Page;
 
+async function hasLiveTradingView() {
+  try {
+    const targets = await CDP.List({ host: '127.0.0.1', port: 9222 });
+    return Array.isArray(targets) && targets.some(t => t.url && /tradingview\.com\/chart/i.test(t.url));
+  } catch {
+    return false;
+  }
+}
+
+const liveTradingViewAvailable = await hasLiveTradingView();
+const suite = liveTradingViewAvailable ? describe : describe.skip;
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 async function evaluate(expr) {
@@ -67,7 +79,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('TradingView MCP — Full E2E (70 tools)', () => {
+suite('TradingView MCP — Full E2E (70 tools)', () => {
 
   before(async () => {
     try {
